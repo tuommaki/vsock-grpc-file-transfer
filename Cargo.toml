@@ -1,0 +1,26 @@
+[package]
+name = "vsock-file-transfer"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]] # Bin to run the gRPC file server
+name = "vsock-server"
+path = "src/server.rs"
+
+[[bin]] # Bin to run the gRPC client
+name = "vsock-client"
+path = "src/client.rs"
+
+
+[dependencies]
+anyhow = "1"
+prost = "0.11"
+tokio = { version = "1.0", features = ["full"] }
+tokio-stream = "0.1"
+tokio-vsock = { version = "0.4.0", features = ["tonic-conn"] }
+tonic = "0.8.3"
+tower = "0.4.0"
+vsock = "0.3.0"
+
+[build-dependencies]
+tonic-build = "0.8"

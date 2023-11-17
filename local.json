@@ -1,0 +1,15 @@
+{
+  "RebootOnExit": true,
+  "RunConfig": {
+    "CPUs": 4,
+    "Memory": "8g"
+  },
+  "ManifestPassthrough": {
+    "readonly_rootfs": "true"
+  },
+  "Program":"target/release/vsock-client",
+  "Mounts": {
+    "workspace": "/workspace"
+  }
+}
+

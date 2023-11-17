@@ -1,0 +1,31 @@
+syntax = "proto3";
+
+package demo_service;
+
+service DemoService {
+  rpc GetFile (FileRequest) returns (stream FileResponse) {}
+}
+
+message FileRequest {
+  string path = 1;
+}
+
+message File {
+  string path = 1;
+  bytes data = 2;
+}
+
+message FileChunk {
+  bytes data = 1;
+}
+
+enum FileError {
+  NotFound = 0;
+}
+
+message FileResponse {
+  oneof result {
+    FileChunk chunk = 1;
+    FileError error = 2;
+  }
+}
