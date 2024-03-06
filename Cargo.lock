@@ -1185,7 +1185,9 @@ name = "vsock-file-transfer"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-stream",
  "prost",
+ "rand",
  "tokio",
  "tokio-stream",
  "tokio-vsock",

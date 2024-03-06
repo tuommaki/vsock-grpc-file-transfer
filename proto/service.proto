@@ -4,6 +4,8 @@ package demo_service;
 
 service DemoService {
   rpc GetFile (FileRequest) returns (stream FileResponse) {}
+  rpc SendData (stream Data) returns (EmptyResponse) {}
+  rpc SubmitFile(stream FileData) returns (GenericResponse) {}
 }
 
 message FileRequest {
@@ -13,6 +15,10 @@ message FileRequest {
 message File {
   string path = 1;
   bytes data = 2;
+}
+
+message FileMetadata {
+  string path = 1;
 }
 
 message FileChunk {
@@ -28,4 +34,23 @@ message FileResponse {
     FileChunk chunk = 1;
     FileError error = 2;
   }
+}
+
+message FileData {
+  oneof result {
+    FileMetadata metadata = 1;
+    FileChunk chunk = 2;
+    FileError error = 3;
+  }
+}
+
+message Data {
+  bytes data = 1;
+}
+
+message EmptyResponse {}
+
+message GenericResponse {
+  bool success = 1;
+  string message = 2;
 }

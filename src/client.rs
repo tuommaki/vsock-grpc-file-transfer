@@ -1,17 +1,22 @@
 use std::path::Path;
 
 use anyhow::Result;
-use grpc::demo_service_client::DemoServiceClient;
-use tokio::io::AsyncWriteExt;
+use grpc::{demo_service_client::DemoServiceClient, FileChunk, FileData, FileMetadata};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_stream::StreamExt;
 use tokio_vsock::VsockStream;
-use tonic::transport::{Channel, Endpoint, Uri};
+use tonic::{
+    transport::{Channel, Endpoint, Uri},
+    Request,
+};
 use tower::service_fn;
 use vsock::VMADDR_CID_HOST;
 
 pub mod grpc {
     tonic::include_proto!("demo_service");
 }
+
+const DATA_STREAM_CHUNK_SIZE: usize = 4096;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -25,6 +30,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut client = DemoServiceClient::new(channel);
 
     let _response = download_file(&mut client, "test_file_1").await?;
+
+    submit_file(&mut client, "/workspace/test_file_1").await?;
 
     Ok(())
 }
@@ -72,4 +79,70 @@ async fn download_file(client: &mut DemoServiceClient<Channel>, name: &str) -> R
     println!("downloaded {} bytes for {}", &total_bytes, &name);
 
     Ok(path)
+}
+
+async fn send_data(client: &mut DemoServiceClient<Channel>, n_bytes: usize) -> Result<()> {
+    let outbound = async_stream::stream! {
+        let mut written = 0;
+
+        while written <= n_bytes {
+            let bytes_to_write = std::cmp::min(n_bytes-written, DATA_STREAM_CHUNK_SIZE);
+            let bytes = (0..bytes_to_write).map(|_| { rand::random::<u8>() }).collect();
+
+            let data = grpc::Data{
+                data: bytes,
+            };
+
+            written += bytes_to_write;
+
+            yield data;
+        }
+    };
+
+    if let Err(err) = client.send_data(Request::new(outbound)).await {
+        println!("failed to submit data: {}", err);
+    }
+
+    Ok(())
+}
+
+async fn submit_file(client: &mut DemoServiceClient<Channel>, file_path: &str) -> Result<()> {
+    let file_path = file_path.to_string();
+    let outbound = async_stream::stream! {
+        let fd = match tokio::fs::File::open(&file_path).await {
+            Ok(fd) => fd,
+            Err(err) => {
+                println!("failed to open file {file_path}: {}", err);
+                return;
+            }
+        };
+
+        let mut file = tokio::io::BufReader::new(fd);
+
+        let metadata = FileData{ result: Some(grpc::file_data::Result::Metadata(FileMetadata {
+            path: file_path.to_string(),
+        }))};
+
+        yield metadata;
+
+        let mut buf: [u8; DATA_STREAM_CHUNK_SIZE] = [0; DATA_STREAM_CHUNK_SIZE];
+        loop {
+            match file.read(&mut buf).await {
+                Ok(0) => return,
+                Ok(n) => {
+                    yield FileData{ result: Some(grpc::file_data::Result::Chunk(FileChunk{ data: buf[..n].to_vec() }))};
+                },
+                Err(err) => {
+                    println!("failed to read file: {}", err);
+                    yield FileData{ result: Some(grpc::file_data::Result::Error(1))};
+                }
+            }
+        }
+    };
+
+    if let Err(err) = client.submit_file(Request::new(outbound)).await {
+        println!("failed to submit file: {}", err);
+    }
+
+    Ok(())
 }

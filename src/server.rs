@@ -1,10 +1,13 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
-use tokio::{io::AsyncReadExt, sync::mpsc};
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    sync::mpsc,
+};
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_vsock::VsockListener;
-use tonic::{transport::Server, Request, Response, Status};
+use tonic::{transport::Server, Code, Request, Response, Status, Streaming};
 use vsock::get_local_cid;
 
 pub mod grpc {
@@ -13,7 +16,8 @@ pub mod grpc {
 
 use grpc::{
     demo_service_server::{DemoService, DemoServiceServer},
-    FileRequest, FileResponse,
+    Data, EmptyResponse, FileChunk, FileData, FileMetadata, FileRequest, FileResponse,
+    GenericResponse,
 };
 
 use crate::grpc::file_response;
@@ -68,6 +72,110 @@ impl DemoService for FileServer {
         });
 
         Ok(Response::new(ReceiverStream::new(rx)))
+    }
+
+    async fn send_data(
+        &self,
+        request: Request<Streaming<Data>>,
+    ) -> Result<Response<EmptyResponse>, Status> {
+        let mut stream = request.into_inner();
+
+        let mut n_bytes = 0;
+
+        while let Ok(Some(Data { data })) = stream.message().await {
+            n_bytes += data.len();
+        }
+
+        println!("received {n_bytes} bytes");
+
+        Ok(Response::new(EmptyResponse {}))
+    }
+
+    async fn submit_file(
+        &self,
+        request: Request<Streaming<FileData>>,
+    ) -> Result<Response<GenericResponse>, Status> {
+        let mut stream = request.into_inner();
+        let mut file: Option<tokio::io::BufWriter<tokio::fs::File>> = None;
+
+        while let Ok(Some(grpc::FileData { result: data })) = stream.message().await {
+            match data {
+                Some(grpc::file_data::Result::Metadata(FileMetadata { path })) => {
+                    let mut path = Path::new(&path);
+                    if path.is_absolute() {
+                        path = match path.strip_prefix("/") {
+                            Ok(path) => path,
+                            Err(err) => {
+                                println!("failed to strip '/' prefix from file path: {}", err);
+                                return Err(Status::new(
+                                    Code::Internal,
+                                    "failed to strip '/' prefix from file path".to_string(),
+                                ));
+                            }
+                        };
+                    }
+
+                    // Ensure any necessary subdirectories exists.
+                    if let Some(parent) = path.parent() {
+                        tokio::fs::create_dir_all(parent)
+                            .await
+                            .expect("task file mkdir");
+                    }
+
+                    let fd = tokio::fs::File::create(path.with_file_name("received")).await?;
+                    file = Some(tokio::io::BufWriter::new(fd));
+                }
+                Some(grpc::file_data::Result::Chunk(FileChunk { data })) => match file.as_mut() {
+                    Some(fd) => {
+                        if let Err(err) = fd.write_all(data.as_slice()).await {
+                            println!("error while writing to file: {}", err);
+                            return Err(Status::new(
+                                Code::Internal,
+                                "failed to write file".to_string(),
+                            ));
+                        } else {
+                            println!("{} bytes received & written to file", data.len());
+                        }
+                    }
+                    None => {
+                        println!("received None from client on submit_file stream");
+                        return Err(Status::new(
+                            Code::InvalidArgument,
+                            "file data sent before metadata; aborting".to_string(),
+                        ));
+                    }
+                },
+                Some(grpc::file_data::Result::Error(code)) => {
+                    println!("error from client: {code}");
+                    return Err(Status::new(
+                        Code::Aborted,
+                        format!("file transfer aborted by client; error code: {code}"),
+                    ));
+                }
+                None => {
+                    println!("FileData message with None as a body");
+                    return Err(Status::new(
+                        Code::InvalidArgument,
+                        "file data sent without body".to_string(),
+                    ));
+                }
+            }
+        }
+
+        if file.is_some() {
+            if let Err(err) = file.unwrap().flush().await {
+                println!("failed to flush file: {}", err);
+                return Err(Status::new(
+                    Code::Internal,
+                    "failed to flush file writes".to_string(),
+                ));
+            };
+        }
+
+        Ok(Response::new(GenericResponse {
+            success: true,
+            message: String::from("file received"),
+        }))
     }
 }
 
