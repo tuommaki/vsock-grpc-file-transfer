@@ -3,6 +3,7 @@ syntax = "proto3";
 package demo_service;
 
 service DemoService {
+  rpc Ping (PingRequest) returns (PingResponse) {}
   rpc GetFile (FileRequest) returns (stream FileResponse) {}
   rpc SendData (stream Data) returns (EmptyResponse) {}
   rpc SubmitFile(stream FileData) returns (GenericResponse) {}
@@ -47,6 +48,15 @@ message FileData {
 message Data {
   bytes data = 1;
 }
+
+message PingRequest {
+  bytes msg = 1;
+}
+
+message PingResponse {
+  bytes msg = 1;
+}
+
 
 message EmptyResponse {}
 

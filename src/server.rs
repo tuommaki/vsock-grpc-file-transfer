@@ -17,7 +17,7 @@ pub mod grpc {
 use grpc::{
     demo_service_server::{DemoService, DemoServiceServer},
     Data, EmptyResponse, FileChunk, FileData, FileMetadata, FileRequest, FileResponse,
-    GenericResponse,
+    GenericResponse, PingRequest, PingResponse,
 };
 
 use crate::grpc::file_response;
@@ -32,6 +32,12 @@ pub struct FileServer {
 #[tonic::async_trait]
 impl DemoService for FileServer {
     type GetFileStream = ReceiverStream<Result<FileResponse, Status>>;
+
+    async fn ping(&self, request: Request<PingRequest>) -> Result<Response<PingResponse>, Status> {
+        let req = request.into_inner();
+        Ok(Response::new(PingResponse { msg: req.msg }))
+    }
+
     async fn get_file(
         &self,
         request: Request<FileRequest>,
